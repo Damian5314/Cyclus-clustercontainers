@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container GPS Validator</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ── Header ── */
+        #header {
+            background: #0d0d0d;
+            border-bottom: 2px solid #f5a623;
+            padding: 9px 18px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            z-index: 1000;
+            flex-shrink: 0;
+        }
+        #header h1 {
+            font-size: 14px;
+            font-weight: bold;
+            color: #f5a623;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        #stats-bar {
+            display: flex;
+            gap: 18px;
+            align-items: center;
+            font-size: 11px;
+            color: #777;
+        }
+        .stat { display: flex; align-items: center; gap: 5px; }
+        .stat-value { font-weight: bold; }
+        .header-actions { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+
+        /* ── Buttons ── */
+        .btn {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            padding: 6px 13px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: all 0.15s;
+        }
+        .btn:hover { background: #3a3a3a; border-color: #f5a623; color: #f5a623; }
+        .btn-primary { background: #f5a623; color: #0d0d0d; border-color: #f5a623; font-weight: bold; }
+        .btn-primary:hover { background: #ffc04a; color: #0d0d0d; border-color: #ffc04a; }
+        .btn-danger { border-color: #e74c3c; color: #e74c3c; }
+        .btn-danger:hover { background: #e74c3c; color: #fff; }
+        .btn-sm { padding: 4px 9px; font-size: 10px; }
+
+        /* ── Main layout ── */
+        #main { display: flex; flex: 1; overflow: hidden; }
+
+        /* ── Sidebar ── */
+        #sidebar {
+            width: 300px;
+            min-width: 300px;
+            background: #141414;
+            border-right: 2px solid #2a2a2a;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: width 0.25s, min-width 0.25s, border-width 0.25s;
+        }
+        #sidebar.collapsed { width: 0; min-width: 0; border-right-width: 0; }
+
+        .sidebar-header {
+            background: #1c1c1c;
+            border-bottom: 1px solid #2a2a2a;
+            padding: 9px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: #888;
+            flex-shrink: 0;
+        }
+        #search-box {
+            flex-shrink: 0;
+            position: relative;
+        }
+        #search-input {
+            width: 100%;
+            background: #0d0d0d;
+            border: none;
+            border-bottom: 1px solid #2a2a2a;
+            color: #e0e0e0;
+            padding: 8px 14px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            outline: none;
+        }
+        #search-input:focus { border-bottom-color: #f5a623; }
+        #search-input::placeholder { color: #444; }
+
+        #table-container { flex: 1; overflow-y: auto; overflow-x: hidden; }
+        #table-container::-webkit-scrollbar { width: 3px; }
+        #table-container::-webkit-scrollbar-track { background: #111; }
+        #table-container::-webkit-scrollbar-thumb { background: #3a3a3a; }
+
+        .container-row {
+            padding: 9px 12px;
+            border-bottom: 1px solid #1e1e1e;
+            cursor: pointer;
+            transition: background 0.1s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .container-row:hover { background: #202020; }
+        .container-row.active { background: #221c00; border-left: 3px solid #f5a623; padding-left: 9px; }
+        .container-row.edited { border-left: 3px solid #27ae60; padding-left: 9px; }
+        .container-row.active.edited { border-left-color: #f5a623; }
+
+        .row-num {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: #2a6da8;
+            color: #fff;
+            font-size: 10px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: background 0.2s;
+        }
+        .row-num.edited { background: #27ae60; }
+        .row-num.invalid { background: #c0392b; }
+
+        .row-info { flex: 1; min-width: 0; }
+        .row-name { font-size: 12px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .row-coords { font-size: 10px; color: #555; margin-top: 2px; }
+
+        /* ── Map area ── */
+        #map-container { flex: 1; position: relative; }
+        #map { width: 100%; height: 100%; }
+
+        /* ── Sidebar toggle ── */
+        #toggle-sidebar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 800;
+            background: rgba(13,13,13,0.88);
+            border: 1px solid #444;
+            color: #e0e0e0;
+            width: 32px;
+            height: 32px;
+            cursor: pointer;
+            font-size: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(4px);
+            transition: border-color 0.15s;
+        }
+        #toggle-sidebar:hover { border-color: #f5a623; color: #f5a623; }
+
+        /* ── Edit panel ── */
+        #edit-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 290px;
+            background: rgba(16,16,16,0.96);
+            border: 1px solid #333;
+            z-index: 800;
+            display: none;
+            flex-direction: column;
+            backdrop-filter: blur(6px);
+            box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+        }
+        #edit-panel.visible { display: flex; }
+
+        .ep-header {
+            background: #1a1a1a;
+            border-bottom: 1px solid #2a2a2a;
+            padding: 9px 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .ep-title { font-size: 11px; color: #f5a623; letter-spacing: 2px; text-transform: uppercase; font-weight: bold; }
+        .ep-close { background: none; border: none; color: #555; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
+        .ep-close:hover { color: #e0e0e0; }
+
+        .ep-body { padding: 12px; overflow-y: auto; flex: 1; }
+        .ep-body::-webkit-scrollbar { width: 3px; }
+        .ep-body::-webkit-scrollbar-thumb { background: #333; }
+
+        .coord-block {
+            background: #0a0a0a;
+            border: 1px solid #2a2a2a;
+            padding: 10px;
+            margin-bottom: 12px;
+        }
+        .coord-block-title {
+            font-size: 10px;
+            color: #f5a623;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+        .coord-row { display: flex; gap: 8px; align-items: center; margin-bottom: 7px; }
+        .coord-row:last-child { margin-bottom: 0; }
+        .coord-axis { font-size: 10px; color: #666; width: 24px; flex-shrink: 0; text-transform: uppercase; }
+
+        .field-input {
+            flex: 1;
+            width: 100%;
+            background: #111;
+            border: 1px solid #333;
+            color: #e8e8e8;
+            padding: 6px 9px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            outline: none;
+        }
+        .field-input:focus { border-color: #f5a623; }
+        .field-input.error { border-color: #e74c3c; }
+
+        .meta-field { margin-bottom: 10px; }
+        .meta-label { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 3px; }
+        .meta-value { font-size: 12px; color: #bbb; word-break: break-word; }
+
+        .invalid-msg { color: #e74c3c; font-size: 10px; margin-top: 6px; }
+        .edited-badge {
+            font-size: 9px;
+            background: #27ae60;
+            color: #fff;
+            padding: 2px 6px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .ep-drag-hint {
+            font-size: 10px;
+            color: #444;
+            text-align: center;
+            padding: 5px 12px;
+            border-top: 1px solid #1e1e1e;
+            flex-shrink: 0;
+        }
+        .ep-footer {
+            padding: 9px 12px;
+            border-top: 1px solid #2a2a2a;
+            display: flex;
+            gap: 7px;
+            flex-shrink: 0;
+        }
+        .ep-footer .btn { flex: 1; }
+
+        /* ── Upload overlay ── */
+        #upload-overlay {
+            position: fixed;
+            inset: 0;
+            background: #0d0d0d;
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 0;
+        }
+        .upload-box {
+            border: 2px dashed #333;
+            padding: 56px 80px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            max-width: 480px;
+            width: 90vw;
+        }
+        .upload-box:hover, .upload-box.drag-over { border-color: #f5a623; background: #120f00; }
+        .upload-icon { font-size: 52px; margin-bottom: 18px; }
+        .upload-title { font-size: 20px; color: #f5a623; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 8px; }
+        .upload-sub { font-size: 12px; color: #555; margin-bottom: 24px; line-height: 1.6; }
+        #file-input { display: none; }
+        .upload-note { font-size: 10px; color: #333; margin-top: 18px; }
+
+        /* ── Column mapping modal ── */
+        #mapping-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.88);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        #mapping-modal.visible { display: flex; }
+        .modal-box { background: #141414; border: 1px solid #333; width: 460px; max-width: 92vw; }
+        .modal-header { background: #1c1c1c; border-bottom: 1px solid #2a2a2a; padding: 14px 18px; font-size: 13px; color: #f5a623; letter-spacing: 2px; text-transform: uppercase; }
+        .modal-body { padding: 20px 18px; }
+        .modal-body p { font-size: 11px; color: #666; margin-bottom: 18px; line-height: 1.6; }
+        .map-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .map-lbl { width: 90px; font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; flex-shrink: 0; }
+        .map-sel {
+            flex: 1;
+            background: #0d0d0d;
+            border: 1px solid #333;
+            color: #e0e0e0;
+            padding: 7px 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            outline: none;
+        }
+        .map-sel:focus { border-color: #f5a623; }
+        .modal-footer { padding: 12px 18px; border-top: 1px solid #2a2a2a; display: flex; gap: 8px; justify-content: flex-end; }
+
+        /* ── Toast ── */
+        #toast-container { position: fixed; bottom: 16px; right: 16px; z-index: 9999; display: flex; flex-direction: column; gap: 7px; pointer-events: none; }
+        .toast {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-left: 3px solid #f5a623;
+            padding: 9px 14px;
+            font-size: 11px;
+            color: #ccc;
+            min-width: 200px;
+            animation: toastIn 0.25s ease;
+        }
+        .toast.success { border-left-color: #27ae60; }
+        .toast.error { border-left-color: #e74c3c; }
+        @keyframes toastIn { from { transform: translateX(110%); opacity: 0; } to { transform: none; opacity: 1; } }
+
+        /* ── Leaflet overrides ── */
+        .leaflet-popup-content-wrapper {
+            background: #111 !important;
+            color: #e0e0e0 !important;
+            border-radius: 0 !important;
+            border: 1px solid #333 !important;
+            box-shadow: 0 3px 16px rgba(0,0,0,0.7) !important;
+        }
+        .leaflet-popup-tip { background: #111 !important; }
+        .leaflet-popup-content { margin: 12px 14px !important; }
+        .leaflet-control-zoom a {
+            background: rgba(13,13,13,0.9) !important;
+            color: #aaa !important;
+            border-color: #333 !important;
+        }
+        .leaflet-control-zoom a:hover { color: #f5a623 !important; }
+        .leaflet-control-attribution { background: rgba(0,0,0,0.5) !important; color: #444 !important; }
+        .leaflet-control-attribution a { color: #555 !important; }
+    </style>
+</head>
+<body>
+
+<!-- Upload overlay -->
+<div id="upload-overlay">
+    <div class="upload-box" id="drop-zone">
+        <div class="upload-icon">📦</div>
+        <div class="upload-title">GPS Validator</div>
+        <div class="upload-sub">Drop an Excel file here, or click to browse.<br>Requires columns for latitude &amp; longitude.</div>
+        <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">Select Excel File</button>
+        <input type="file" id="file-input" accept=".xlsx,.xls" />
+        <div class="upload-note">Supported: .xlsx · .xls · Client-side only — no data leaves your browser</div>
+    </div>
+</div>
+
+<!-- Column mapping modal -->
+<div id="mapping-modal">
+    <div class="modal-box">
+        <div class="modal-header">Column Mapping</div>
+        <div class="modal-body">
+            <p>Select which columns contain the GPS coordinates. All other columns are preserved as read-only metadata. The first sheet of the workbook will be used.</p>
+            <div class="map-row">
+                <div class="map-lbl">Latitude</div>
+                <select class="map-sel" id="lat-col"></select>
+            </div>
+            <div class="map-row">
+                <div class="map-lbl">Longitude</div>
+                <select class="map-sel" id="lng-col"></select>
+            </div>
+            <div class="map-row">
+                <div class="map-lbl">Label <span style="color:#444">(opt)</span></div>
+                <select class="map-sel" id="label-col">
+                    <option value="">— none —</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" onclick="closeModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="confirmMapping()">Load Data</button>
+        </div>
+    </div>
+</div>
+
+<!-- Header (hidden until data loaded) -->
+<div id="header" style="display:none">
+    <h1>Container GPS Validator</h1>
+    <div id="stats-bar">
+        <div class="stat">Total <span class="stat-value" id="s-total" style="color:#f5a623">0</span></div>
+        <div class="stat">Edited <span class="stat-value" id="s-edited" style="color:#27ae60">0</span></div>
+        <div class="stat">Invalid <span class="stat-value" id="s-invalid" style="color:#e74c3c">0</span></div>
+    </div>
+    <div class="header-actions">
+        <button class="btn" onclick="fitAll()">Fit All</button>
+        <button class="btn" onclick="document.getElementById('file-input').click()">New File</button>
+        <button class="btn btn-primary" onclick="exportExcel()">&#8595; Export Excel</button>
+    </div>
+</div>
+
+<!-- Main layout (hidden until data loaded) -->
+<div id="main" style="display:none">
+
+    <!-- Left sidebar -->
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <span>Containers</span>
+            <span id="s-count" style="color:#f5a623;font-size:13px">0</span>
+        </div>
+        <div id="search-box">
+            <input type="text" id="search-input" placeholder="Search…" oninput="filterRows(this.value)" />
+        </div>
+        <div id="table-container"></div>
+    </div>
+
+    <!-- Map -->
+    <div id="map-container">
+        <button id="toggle-sidebar" onclick="toggleSidebar()" title="Toggle sidebar">☰</button>
+        <div id="map"></div>
+
+        <!-- Edit panel -->
+        <div id="edit-panel">
+            <div class="ep-header">
+                <div class="ep-title">Edit Container</div>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <span id="ep-badge" class="edited-badge" style="display:none">Edited</span>
+                    <button class="ep-close" onclick="closeEditPanel()">✕</button>
+                </div>
+            </div>
+            <div class="ep-body" id="ep-body"></div>
+            <div class="ep-drag-hint">↔ Drag the marker on the map to reposition</div>
+            <div class="ep-footer">
+                <button class="btn btn-sm" onclick="revertRow()">Revert</button>
+                <button class="btn btn-primary btn-sm" onclick="applyEdit()">Apply Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toasts -->
+<div id="toast-container"></div>
+
+<script>
+// ─── State ───────────────────────────────────────────────────────────────────
+let rawRows   = [];      // parsed from SheetJS (plain objects)
+let data      = [];      // working copy, augmented with _index, _edited
+let origData  = [];      // pristine values for revert
+let columns   = [];      // all column keys from the sheet
+let latCol    = '';
+let lngCol    = '';
+let labelCol  = '';
+let map       = null;
+let markers   = [];      // parallel to data[], null for invalid rows
+let activeIdx = null;
+let sidebarOn = true;
+
+// ─── File input ──────────────────────────────────────────────────────────────
+document.getElementById('file-input').addEventListener('change', e => {
+    if (e.target.files[0]) processFile(e.target.files[0]);
+    e.target.value = '';
+});
+
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) processFile(e.dataTransfer.files[0]);
+});
+
+function processFile(file) {
+    const reader = new FileReader();
+    reader.onload = ev => {
+        try {
+            const wb = XLSX.read(ev.target.result, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            rawRows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+            if (!rawRows.length) { toast('No data rows found in file.', 'error'); return; }
+            columns = Object.keys(rawRows[0]);
+            showMappingModal();
+        } catch (err) {
+            toast('Error reading file: ' + err.message, 'error');
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// ─── Column mapping modal ─────────────────────────────────────────────────────
+function showMappingModal() {
+    const fill = (id, withNone) => {
+        const sel = document.getElementById(id);
+        sel.innerHTML = withNone ? '<option value="">— none —</option>' : '';
+        columns.forEach(c => {
+            const o = document.createElement('option');
+            o.value = o.text = c;
+            sel.appendChild(o);
+        });
+    };
+    fill('lat-col', false);
+    fill('lng-col', false);
+    fill('label-col', true);
+
+    // Auto-detect
+    const guess = (patterns) => columns.find(c => patterns.some(p => p.test(c.trim())));
+    const latG   = guess([/^lat(itude)?$/i, /^breedtegraad$/i]) || guess([/lat/i]);
+    const lngG   = guess([/^l(o?n|ng)(gitude)?$/i, /^lengtegraad$/i]) || guess([/lon|lng/i]);
+    const lblG   = guess([/name|naam|id|label|container|locatie|omschrijving/i]);
+
+    if (latG) document.getElementById('lat-col').value = latG;
+    if (lngG) document.getElementById('lng-col').value = lngG;
+    if (lblG) document.getElementById('label-col').value = lblG;
+
+    document.getElementById('mapping-modal').classList.add('visible');
+}
+
+function closeModal() {
+    document.getElementById('mapping-modal').classList.remove('visible');
+}
+
+function confirmMapping() {
+    const lc = document.getElementById('lat-col').value;
+    const nc = document.getElementById('lng-col').value;
+    const lb = document.getElementById('label-col').value;
+
+    if (!lc || !nc)   { toast('Select both latitude and longitude columns.', 'error'); return; }
+    if (lc === nc)    { toast('Latitude and longitude cannot be the same column.', 'error'); return; }
+
+    latCol   = lc;
+    lngCol   = nc;
+    labelCol = lb;
+
+    closeModal();
+    loadData();
+}
+
+// ─── Load data ────────────────────────────────────────────────────────────────
+function loadData() {
+    data     = rawRows.map((r, i) => ({ _index: i, _edited: false, ...r }));
+    origData = rawRows.map(r => ({ ...r }));
+
+    document.getElementById('upload-overlay').style.display = 'none';
+    document.getElementById('header').style.display = 'flex';
+    document.getElementById('main').style.display   = 'flex';
+
+    if (!map) initMap();
+    else clearMarkers();
+
+    activeIdx = null;
+    closeEditPanel();
+    renderAll();
+}
+
+// ─── Map ──────────────────────────────────────────────────────────────────────
+function initMap() {
+    map = L.map('map', { center: [52.3, 5.3], zoom: 8, zoomControl: false });
+
+    L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+            attribution: 'Tiles &copy; Esri &mdash; Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, GIS User Community',
+            maxZoom: 19
+        }
+    ).addTo(map);
+
+    // Labels overlay
+    L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        { opacity: 0.7, maxZoom: 19 }
+    ).addTo(map);
+
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+}
+
+function clearMarkers() {
+    markers.forEach(m => m && map.removeLayer(m));
+    markers = [];
+}
+
+function makeIcon(idx, edited, invalid) {
+    const color = invalid ? '#c0392b' : edited ? '#27ae60' : '#2a6da8';
+    const n     = idx + 1;
+    const fs    = n > 99 ? 7 : n > 9 ? 9 : 11;
+    const svg   = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="38" viewBox="0 0 28 38">
+        <path d="M14 0C6.3 0 0 6.3 0 14c0 9.5 14 24 14 24s14-14.5 14-24C28 6.3 21.7 0 14 0z"
+              fill="${color}" stroke="rgba(0,0,0,0.5)" stroke-width="1.5"/>
+        <circle cx="14" cy="14" r="7" fill="rgba(0,0,0,0.25)"/>
+        <text x="14" y="18" font-family="Courier New,monospace" font-size="${fs}"
+              font-weight="bold" fill="#fff" text-anchor="middle">${n}</text>
+    </svg>`;
+    return L.divIcon({ html: svg, className: '', iconSize: [28, 38], iconAnchor: [14, 38], popupAnchor: [0, -40] });
+}
+
+function popupHtml(row, i) {
+    const lat   = parseFloat(row[latCol]);
+    const lng   = parseFloat(row[lngCol]);
+    const label = labelCol ? esc(String(row[labelCol])) : `Container ${i + 1}`;
+    return `<div style="font-family:'Courier New',monospace;font-size:12px;min-width:190px">
+        <div style="font-weight:bold;color:#f5a623;margin-bottom:7px;font-size:13px">${label}</div>
+        <div style="color:#777;margin-bottom:3px">LAT <span style="color:#ddd">${isNaN(lat) ? '—' : lat.toFixed(6)}</span></div>
+        <div style="color:#777;margin-bottom:9px">LNG <span style="color:#ddd">${isNaN(lng) ? '—' : lng.toFixed(6)}</span></div>
+        ${row._edited ? '<div style="color:#27ae60;font-size:10px;margin-bottom:7px">✔ EDITED</div>' : ''}
+        <button onclick="openEditPanel(${i})" style="background:#f5a623;border:none;color:#000;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:bold;letter-spacing:1px">EDIT</button>
+    </div>`;
+}
+
+function addMarker(i) {
+    const row = data[i];
+    const lat = parseFloat(row[latCol]);
+    const lng = parseFloat(row[lngCol]);
+    const invalid = isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180;
+
+    if (invalid) { markers.push(null); return; }
+
+    const m = L.marker([lat, lng], {
+        icon: makeIcon(i, row._edited, false),
+        draggable: true
+    }).addTo(map);
+
+    m.bindPopup(popupHtml(row, i), { maxWidth: 240 });
+    m.on('click', () => openEditPanel(i));
+
+    m.on('dragend', ev => {
+        const ll = ev.target.getLatLng();
+        data[i][latCol]  = parseFloat(ll.lat.toFixed(6));
+        data[i][lngCol]  = parseFloat(ll.lng.toFixed(6));
+        data[i]._edited  = true;
+        refreshMarker(i);
+        refreshTableRow(i);
+        updateStats();
+        if (activeIdx === i) openEditPanel(i);
+        toast(`Marker ${i + 1} repositioned`, 'success');
+    });
+
+    markers.push(m);
+}
+
+function refreshMarker(i) {
+    const row = data[i];
+    const lat = parseFloat(row[latCol]);
+    const lng = parseFloat(row[lngCol]);
+    const invalid = isNaN(lat) || isNaN(lng);
+    if (!markers[i]) return;
+    markers[i].setIcon(makeIcon(i, row._edited, invalid));
+    markers[i].setPopupContent(popupHtml(row, i));
+    if (!invalid) markers[i].setLatLng([lat, lng]);
+}
+
+function fitAll() {
+    const pts = [];
+    data.forEach(r => {
+        const la = parseFloat(r[latCol]), lo = parseFloat(r[lngCol]);
+        if (!isNaN(la) && !isNaN(lo) && la >= -90 && la <= 90 && lo >= -180 && lo <= 180)
+            pts.push([la, lo]);
+    });
+    if (pts.length) map.fitBounds(pts, { padding: [40, 40] });
+}
+
+// ─── Sidebar table ────────────────────────────────────────────────────────────
+function renderAll() {
+    clearMarkers();
+    data.forEach((_, i) => addMarker(i));
+    renderTable();
+    updateStats();
+    fitAll();
+}
+
+function renderTable() {
+    const tc = document.getElementById('table-container');
+    tc.innerHTML = '';
+    data.forEach((row, i) => tc.appendChild(buildTableRow(row, i)));
+    document.getElementById('s-count').textContent = data.length;
+}
+
+function buildTableRow(row, i) {
+    const lat = parseFloat(row[latCol]);
+    const lng = parseFloat(row[lngCol]);
+    const bad = isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180;
+    const lbl = labelCol ? String(row[labelCol]) : `Container ${i + 1}`;
+
+    const div = document.createElement('div');
+    div.id = `tr-${i}`;
+    div.className = 'container-row' +
+        (row._edited  ? ' edited' : '') +
+        (activeIdx === i ? ' active' : '');
+    div.onclick = () => selectRow(i);
+
+    const numCls = bad ? 'invalid' : row._edited ? 'edited' : '';
+    div.innerHTML = `
+        <div class="row-num ${numCls}">${i + 1}</div>
+        <div class="row-info">
+            <div class="row-name">${esc(lbl)}</div>
+            <div class="row-coords">${bad
+                ? '<span style="color:#c0392b">Invalid coordinates</span>'
+                : `${lat.toFixed(6)},&thinsp;${lng.toFixed(6)}`}</div>
+        </div>`;
+    return div;
+}
+
+function refreshTableRow(i) {
+    const el = document.getElementById(`tr-${i}`);
+    if (el) el.replaceWith(buildTableRow(data[i], i));
+}
+
+function filterRows(q) {
+    q = q.toLowerCase();
+    document.querySelectorAll('.container-row').forEach((el, i) => {
+        const lbl  = labelCol ? String(data[i][labelCol]).toLowerCase() : `container ${i + 1}`;
+        const hits = lbl.includes(q) ||
+            String(data[i][latCol]).includes(q) ||
+            String(data[i][lngCol]).includes(q);
+        el.style.display = hits ? '' : 'none';
+    });
+}
+
+// ─── Selection / edit panel ───────────────────────────────────────────────────
+function selectRow(i) {
+    activeIdx = i;
+    highlightRow(i);
+
+    const lat = parseFloat(data[i][latCol]);
+    const lng = parseFloat(data[i][lngCol]);
+    if (!isNaN(lat) && !isNaN(lng)) map.panTo([lat, lng]);
+
+    openEditPanel(i);
+}
+
+function highlightRow(i) {
+    document.querySelectorAll('.container-row').forEach(el => el.classList.remove('active'));
+    const el = document.getElementById(`tr-${i}`);
+    if (el) { el.classList.add('active'); el.scrollIntoView({ block: 'nearest' }); }
+}
+
+function openEditPanel(i) {
+    activeIdx = i;
+    highlightRow(i);
+
+    const row = data[i];
+    const lat = parseFloat(row[latCol]);
+    const lng = parseFloat(row[lngCol]);
+    const bad = isNaN(lat) || isNaN(lng);
+
+    document.getElementById('ep-badge').style.display = row._edited ? 'inline' : 'none';
+
+    let html = `<div class="coord-block">
+        <div class="coord-block-title">GPS Coordinates</div>
+        <div class="coord-row">
+            <div class="coord-axis">Lat</div>
+            <input id="ep-lat" class="field-input${bad && isNaN(lat) ? ' error' : ''}"
+                   type="number" step="0.000001"
+                   value="${isNaN(lat) ? '' : lat.toFixed(6)}"
+                   placeholder="e.g. 52.370216" />
+        </div>
+        <div class="coord-row">
+            <div class="coord-axis">Lng</div>
+            <input id="ep-lng" class="field-input${bad && isNaN(lng) ? ' error' : ''}"
+                   type="number" step="0.000001"
+                   value="${isNaN(lng) ? '' : lng.toFixed(6)}"
+                   placeholder="e.g. 4.895168" />
+        </div>
+        ${bad ? '<div class="invalid-msg">⚠ Coordinates are missing or out of range.</div>' : ''}
+    </div>`;
+
+    // Metadata fields
+    columns.filter(c => c !== latCol && c !== lngCol).forEach(col => {
+        html += `<div class="meta-field">
+            <div class="meta-label">${esc(col)}</div>
+            <div class="meta-value">${esc(String(row[col])) || '<span style="color:#444">—</span>'}</div>
+        </div>`;
+    });
+
+    document.getElementById('ep-body').innerHTML = html;
+    document.getElementById('edit-panel').classList.add('visible');
+
+    // Live preview while typing
+    document.getElementById('ep-lat').addEventListener('input', livePreview);
+    document.getElementById('ep-lng').addEventListener('input', livePreview);
+}
+
+function livePreview() {
+    if (activeIdx === null || !markers[activeIdx]) return;
+    const la = parseFloat(document.getElementById('ep-lat').value);
+    const lo = parseFloat(document.getElementById('ep-lng').value);
+    if (!isNaN(la) && !isNaN(lo)) markers[activeIdx].setLatLng([la, lo]);
+}
+
+function applyEdit() {
+    if (activeIdx === null) return;
+    const la = parseFloat(document.getElementById('ep-lat').value);
+    const lo = parseFloat(document.getElementById('ep-lng').value);
+
+    if (isNaN(la) || isNaN(lo))          { toast('Enter valid numeric coordinates.', 'error'); return; }
+    if (la < -90  || la > 90)            { toast('Latitude must be between −90 and 90.', 'error'); return; }
+    if (lo < -180 || lo > 180)           { toast('Longitude must be between −180 and 180.', 'error'); return; }
+
+    const i = activeIdx;
+    data[i][latCol]  = parseFloat(la.toFixed(6));
+    data[i][lngCol]  = parseFloat(lo.toFixed(6));
+    data[i]._edited  = true;
+
+    if (!markers[i]) {
+        // Was invalid — add a fresh marker
+        markers[i] = null;
+        addMarker(i);   // pushes to markers[]... no: need to replace slot
+        // Actually handle properly:
+        markers.splice(i, 1);  // remove null
+        const m = L.marker([la, lo], {
+            icon: makeIcon(i, true, false),
+            draggable: true
+        }).addTo(map);
+        m.bindPopup(popupHtml(data[i], i), { maxWidth: 240 });
+        m.on('click', () => openEditPanel(i));
+        m.on('dragend', ev => {
+            const ll = ev.target.getLatLng();
+            data[i][latCol] = parseFloat(ll.lat.toFixed(6));
+            data[i][lngCol] = parseFloat(ll.lng.toFixed(6));
+            data[i]._edited = true;
+            refreshMarker(i);
+            refreshTableRow(i);
+            updateStats();
+            if (activeIdx === i) openEditPanel(i);
+            toast(`Marker ${i + 1} repositioned`, 'success');
+        });
+        markers.splice(i, 0, m);
+    } else {
+        refreshMarker(i);
+    }
+
+    refreshTableRow(i);
+    updateStats();
+    openEditPanel(i);
+    toast('Coordinates updated.', 'success');
+}
+
+function revertRow() {
+    if (activeIdx === null) return;
+    const i    = activeIdx;
+    const orig = origData[i];
+
+    data[i][latCol] = orig[latCol];
+    data[i][lngCol] = orig[lngCol];
+    data[i]._edited = false;
+
+    refreshMarker(i);
+    refreshTableRow(i);
+    updateStats();
+    openEditPanel(i);
+    toast('Reverted to original.', 'success');
+}
+
+function closeEditPanel() {
+    document.getElementById('edit-panel').classList.remove('visible');
+    document.querySelectorAll('.container-row').forEach(el => el.classList.remove('active'));
+    activeIdx = null;
+}
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+function updateStats() {
+    let edited = 0, invalid = 0;
+    data.forEach(r => {
+        if (r._edited) edited++;
+        const la = parseFloat(r[latCol]), lo = parseFloat(r[lngCol]);
+        if (isNaN(la) || isNaN(lo) || la < -90 || la > 90 || lo < -180 || lo > 180) invalid++;
+    });
+    document.getElementById('s-total').textContent   = data.length;
+    document.getElementById('s-edited').textContent  = edited;
+    document.getElementById('s-invalid').textContent = invalid;
+}
+
+// ─── Sidebar toggle ───────────────────────────────────────────────────────────
+function toggleSidebar() {
+    sidebarOn = !sidebarOn;
+    document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOn);
+    setTimeout(() => map.invalidateSize(), 260);
+}
+
+// ─── Export ───────────────────────────────────────────────────────────────────
+function exportExcel() {
+    const rows = data.map(row => {
+        const out = {};
+        columns.forEach(c => { out[c] = row[c]; });
+        return out;
+    });
+    const ws = XLSX.utils.json_to_sheet(rows, { header: columns });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Containers');
+    const date = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `containers_gps_${date}.xlsx`);
+    toast('Excel file exported.', 'success');
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
+function esc(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function toast(msg, type = 'info') {
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = msg;
+    document.getElementById('toast-container').appendChild(el);
+    setTimeout(() => el.remove(), 3200);
+}
+</script>
+</body>
+</html>
